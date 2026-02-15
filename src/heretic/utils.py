@@ -31,6 +31,16 @@ from .config import DatasetSpecification, Settings
 print = Console(highlight=False).print
 
 
+def is_rocm_available() -> bool:
+    """
+    Check if PyTorch is built with ROCm (HIP) support.
+
+    Returns:
+        True if PyTorch is built with ROCm, False otherwise.
+    """
+    return hasattr(torch.version, "hip") and torch.version.hip is not None
+
+
 def print_memory_usage():
     def p(label: str, size_in_bytes: int):
         print(f"[grey50]{label}: [bold]{size_in_bytes / (1024**3):.2f} GB[/][/]")

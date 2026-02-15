@@ -44,6 +44,7 @@ from .utils import (
     format_duration,
     get_readme_intro,
     get_trial_parameters,
+    is_rocm_available,
     load_prompts,
     print,
     print_memory_usage,
@@ -172,7 +173,13 @@ def run():
         return
 
     # Adapted from https://github.com/huggingface/accelerate/blob/main/src/accelerate/commands/env.py
-    if torch.cuda.is_available():
+    # Check for ROCm first since torch.cuda.is_available() returns True for ROCm builds
+    if is_rocm_available():
+        count = torch.cuda.device_count()
+        print(f"Detected [bold]{count}[/] ROCm device(s):")
+        for i in range(count):
+            print(f"* GPU {i}: [bold]{torch.cuda.get_device_name(i)}[/] (AMD ROCm)")
+    elif torch.cuda.is_available():
         count = torch.cuda.device_count()
         print(f"Detected [bold]{count}[/] CUDA device(s):")
         for i in range(count):

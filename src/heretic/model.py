@@ -4,9 +4,8 @@
 import math
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any, Type, cast
+from typing import TYPE_CHECKING, Any, Type, cast
 
-import bitsandbytes as bnb
 import torch
 import torch.linalg as LA
 import torch.nn.functional as F
@@ -19,7 +18,6 @@ from transformers import (
     AutoModelForImageTextToText,
     AutoTokenizer,
     BatchEncoding,
-    BitsAndBytesConfig,
     PretrainedConfig,
     PreTrainedModel,
     PreTrainedTokenizerBase,
@@ -29,8 +27,11 @@ from transformers.generation import (
     GenerateDecoderOnlyOutput,  # ty:ignore[possibly-missing-import]
 )
 
+if TYPE_CHECKING:
+    from transformers import BitsAndBytesConfig
+
 from .config import QuantizationMethod, RowNormalization, Settings
-from .utils import Prompt, batchify, empty_cache, print
+from .utils import Prompt, batchify, empty_cache, is_rocm_available, print
 
 
 def get_model_class(
@@ -194,7 +195,7 @@ class Model:
 
         print(f"* LoRA adapters initialized (targets: {', '.join(target_modules)})")
 
-    def _get_quantization_config(self, dtype: str) -> BitsAndBytesConfig | None:
+    def _get_quantization_config(self, dtype: str) -> Any:
         """
         Creates quantization config based on settings.
 
@@ -205,6 +206,19 @@ class Model:
             BitsAndBytesConfig or None
         """
         if self.settings.quantization == QuantizationMethod.BNB_4BIT:
+            # Check if ROCm is detected - bitsandbytes is not compatible with ROCm
+            if is_rocm_available():
+                print(
+                    "[bold yellow]Warning: bitsandbytes quantization is not supported on ROCm.[/]"
+                )
+                print(
+                    "[bold yellow]Quantization will be disabled. Model will load in full precision.[/]"
+                )
+                return None
+
+            # Import BitsAndBytesConfig only when needed
+            from transformers import BitsAndBytesConfig
+
             # BitsAndBytesConfig expects a torch.dtype, not a string.
             if dtype == "auto":
                 compute_dtype = torch.bfloat16
@@ -454,15 +468,21 @@ class Model:
                         W = base_weight.to(torch.float32)
                     else:
                         # 4-bit quantization.
-                        # This cast is always valid. Type inference fails here because the
-                        # bnb.functional module is not found by ty for some reason.
-                        W = cast(
-                            Tensor,
-                            bnb.functional.dequantize_4bit(  # ty:ignore[possibly-missing-attribute]
-                                base_weight.data,
-                                quant_state,
-                            ).to(torch.float32),
-                        )
+                        try:
+                            import bitsandbytes as bnb
+
+                            # This cast is always valid. Type inference fails here because the
+                            # bnb.functional module is not found by ty for some reason.
+                            W = cast(
+                                Tensor,
+                                bnb.functional.dequantize_4bit(  # ty:ignore[possibly-missing-attribute]
+                                    base_weight.data,
+                                    quant_state,
+                                ).to(torch.float32),
+                            )
+                        except ImportError:
+                            # bitsandbytes not available, fall back to direct conversion
+                            W = base_weight.to(torch.float32)
 
                     # Flatten weight matrix to (out_features, in_features).
                     W = W.view(W.shape[0], -1)
